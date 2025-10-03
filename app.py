@@ -14,9 +14,9 @@ def transcribe():
     try:
         data = request.get_json(force=True)
 
-        audio_url = data["body"]["audio_url"]
-        webhook_url = data["body"]["webhook_url"]
-        media_key_str = data["body"]["media_key"]
+        audio_url = payload.get("audio_url")
+        media_key = payload.get("media_key")   
+        webhook_url = payload.get("webhook_url") or os.getenv("WEBHOOK_URL")
 
         # Convertir la media key a bytes
         media_key = parse_media_key(media_key_str)
