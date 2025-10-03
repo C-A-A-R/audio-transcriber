@@ -1,5 +1,5 @@
-Flask==3.0.3
+Flask==2.3.3
 requests==2.31.0
-python-dotenv==1.0.0
-pycryptodome==3.23.0
-cryptography==46.0.2
+cryptography==41.0.7
+assemblyai==0.23.1
+python-dotenv==1.0.1

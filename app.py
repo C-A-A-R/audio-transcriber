@@ -1,56 +1,80 @@
-# app.py
 import os
-import time
+import tempfile
 import requests
 from flask import Flask, request, jsonify
-from whatsapp_decrypt import decrypt_whatsapp_audio, parse_media_key
-from conect_assemblyai import upload_to_assemblyai, create_transcription, wait_for_transcription 
+
+from whatsapp_decrypt import download_encrypted, decrypt_whatsapp_media
+from assembly_client import transcribe_with_assemblyai
+
+from dotenv import load_dotenv
+load_dotenv()
 
 app = Flask(__name__)
 
+API_KEY = os.environ.get("API_KEY", "cambia-esta-clave")
 
-@app.route("/transcribe", methods=["POST"])
-def transcribe():
+@app.route("/webhook", methods=["POST"])
+def webhook():
     try:
-        data = request.get_json(force=True)
+        payload = request.get_json()
+        if not payload:
+            return jsonify({"error": "No JSON recibido"}), 400
 
-        audio_url = data.get("audio_url")
-        media_key_str = data.get("media_key")   
-        webhook_url = data.get("webhook_url") or os.getenv("WEBHOOK_URL")
+        raw_num = payload.get("data", {}).get("messages", {}).get('key', {}).get('remoteJid', "")
+        numero = f"+{raw_num.split('@')[0]}" if "@" in raw_num else raw_num
+        message = payload.get("data", {}).get("messages", {})
+        msg = message.get("message", {}) if isinstance(message, dict) else {}
 
-        # Convertir la media key a bytes
-        media_key = parse_media_key(media_key_str)
+        # 📌 Caso texto simple
+        if "conversation" in msg or "extendedTextMessage" in msg:
+            text = msg.get("conversation") or msg.get("extendedTextMessage", {}).get("text")
+            return jsonify({
+                "numero": numero,
+                "type": "text",
+                "transcription": text
+            })
 
-        # Descargar archivo .enc
-        resp = requests.get(audio_url)
-        resp.raise_for_status()
-        enc_data = resp.content
+        # 📌 Caso audio
+        audio_msg = message.get('message', {}).get("audioMessage")
+        if not audio_msg:
+            return jsonify({"status": "no_audio_or_text", "numero": numero}), 200
 
-        # Desencriptar audio
-        audio_data = decrypt_whatsapp_audio(enc_data, media_key)
+        audio_url = audio_msg.get("url")
+        media_key = audio_msg.get("mediaKey")
+        seconds = audio_msg.get("seconds")
+        if not audio_url or not media_key:
+            return jsonify({"error": "Faltan url o mediaKey en audioMessage"}), 400
 
-        # Guardar archivo desencriptado
-        out_file = "/tmp/output.ogg"
-        with open(out_file, "wb") as f:
-            f.write(audio_data)
+        # 1) Descargar archivo .enc
+        enc_bytes = download_encrypted(audio_url)
 
-        # Subir a AssemblyAI
-        upload_url = upload_to_assemblyai(out_file)
+        # 2) Descifrar
+        decrypted_bytes = decrypt_whatsapp_media(enc_bytes, media_key, message_type="audio")
 
-        # Crear transcripción
-        transcript_id = create_transcription(upload_url)
+        # 3) Guardar temporalmente el .ogg
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as tmp_file:
+            tmp_file.write(decrypted_bytes)
+            tmp_path = tmp_file.name
 
-        # Esperar resultado
-        transcript_text = wait_for_transcription(transcript_id)
+        # 4) Transcribir con AssemblyAI
+        transcription = transcribe_with_assemblyai(tmp_path)
 
-        # Enviar a n8n
-        requests.post(webhook_url, json={"transcript": transcript_text})
+        # 5) Eliminar archivo temporal
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
 
-        return jsonify({"status": "ok", "transcript": transcript_text})
+        return jsonify({
+            "numero": numero,
+            "type": "audio",
+            "seconds": seconds,
+            "transcription": transcription
+        }), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=80)
+    app.run(host="0.0.0.0", port=5000, debug=True)
