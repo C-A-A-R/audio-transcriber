@@ -1,4 +1,5 @@
 import base64
+import json
 import requests
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
@@ -6,17 +7,15 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 
 
-def b64_decode_media_key(s: str) -> bytes:
-    """Decodificar mediaKey en base64."""
-    try:
-        return base64.b64decode(s)
-    except Exception:
-        s2 = s + "=" * ((4 - len(s) % 4) % 4)
-        return base64.urlsafe_b64decode(s2)
+def media_key_from_json(media_key_json: str) -> bytes:
+    """
+    Convierte el string JSON {"0":152,"1":88,...} a bytes reales.
+    """
+    obj = json.loads(media_key_json)
+    return bytes([obj[str(i)] for i in range(len(obj))])
 
 
 def derive_media_keys(media_key_bytes: bytes, media_type_info: bytes) -> dict:
-    """Deriva llaves para descifrado de WhatsApp."""
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
         length=112,
@@ -34,7 +33,6 @@ def derive_media_keys(media_key_bytes: bytes, media_type_info: bytes) -> dict:
 
 
 def aes_cbc_decrypt(cipher_key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
-    """AES-CBC decrypt con PKCS7 unpad."""
     cipher = Cipher(algorithms.AES(cipher_key), modes.CBC(iv), backend=default_backend())
     decryptor = cipher.decryptor()
     plaintext_padded = decryptor.update(ciphertext) + decryptor.finalize()
@@ -45,16 +43,14 @@ def aes_cbc_decrypt(cipher_key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
 
 
 def download_encrypted(url: str, timeout: int = 30) -> bytes:
-    """Descarga archivo .enc desde la URL."""
     headers = {"User-Agent": "curl/7.64.1"}
     r = requests.get(url, headers=headers, timeout=timeout, stream=True)
     r.raise_for_status()
     return r.content
 
 
-def decrypt_whatsapp_media(enc_bytes: bytes, media_key_b64: str, message_type: str) -> bytes:
-    """Descifra archivo multimedia de WhatsApp."""
-    media_key = b64_decode_media_key(media_key_b64)
+def decrypt_whatsapp_media(enc_bytes: bytes, media_key_json: str, message_type: str) -> bytes:
+    media_key = media_key_from_json(media_key_json)
 
     type_map = {
         "audio": b"WhatsApp Audio Keys",
