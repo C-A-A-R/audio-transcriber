@@ -2,7 +2,7 @@ import os
 import time
 import tempfile
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 from dotenv import load_dotenv
 
 # Carga .env si existe (local) y luego variables de entorno del sistema
@@ -12,6 +12,10 @@ ASSEMBLY_API_KEY = os.getenv("ASSEMBLY_API_KEY")
 if not ASSEMBLY_API_KEY:
     raise RuntimeError("Falta ASSEMBLY_API_KEY. Ponla en .env o en variables de entorno.")
 
+API_SECRET = os.getenv("API_SECRET")  # 🔒 Nuevo: token de seguridad obligatorio
+if not API_SECRET:
+    raise RuntimeError("Falta API_SECRET. Define uno en .env o variables de entorno.")
+
 API_BASE = "https://api.assemblyai.com/v2"
 HEADERS = {"authorization": ASSEMBLY_API_KEY}
 
@@ -19,6 +23,15 @@ POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "3"))         # segundos entre 
 MAX_POLL_SECONDS = int(os.getenv("MAX_POLL_SECONDS", "300"))   # tiempo máximo de espera (segundos)
 
 app = Flask(__name__)
+
+# Middleware: validar API_SECRET en cada request (excepto /health)
+@app.before_request
+def check_api_key():
+    if request.endpoint == "health":
+        return  # /health siempre accesible
+    token = request.headers.get("X-API-KEY")
+    if token != API_SECRET:
+        abort(401)  # Unauthorized
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -29,9 +42,12 @@ def transcribe():
     """
     POST JSON esperado:
     {
-    "audio_url": "https://mmg.whatsapp.net/....enc",
-    "webhook_url": "https://mi-n8n/webhook"    # opcional, sobrescribe WEBHOOK_URL en .env
+      "audio_url": "https://mmg.whatsapp.net/....enc",
+      "webhook_url": "https://mi-n8n/webhook"    # opcional, sobrescribe WEBHOOK_URL en .env
     }
+
+    Además, el request debe incluir:
+    Header: X-API-KEY=<API_SECRET>
     """
     payload = request.get_json(silent=True) or {}
     audio_url = payload.get("audio_url")
@@ -48,7 +64,7 @@ def transcribe():
         r.raise_for_status()
         transcript_id = r.json()["id"]
     except Exception:
-        # 2) Fallback: descargar y subir el archivo a AssemblyAI (si la URL no es pública/aceptada)
+        # 2) Fallback: descargar y subir el archivo a AssemblyAI
         tmp_path = None
         try:
             with requests.get(audio_url, stream=True, timeout=30) as dl:
@@ -90,7 +106,6 @@ def transcribe():
                 try:
                     requests.post(webhook_url, json=result, timeout=10)
                 except Exception as e:
-                    # no bloqueamos por webhook fallido; lo devolvemos marcado
                     result["_webhook_error"] = str(e)
             return jsonify(result), 200
         elif status == "error":
@@ -99,7 +114,6 @@ def transcribe():
             return jsonify({"error": "timeout_waiting_transcript"}), 504
         time.sleep(POLL_INTERVAL)
 
-
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8080"))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
