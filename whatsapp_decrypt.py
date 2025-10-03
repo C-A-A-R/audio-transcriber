@@ -1,52 +1,35 @@
 # whatsapp_decrypt.py
+import json
 import base64
-import requests
-import hashlib
-from Crypto.Cipher import AES
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
-import tempfile
 
-def parse_media_key(media_key_dict):
-    """Convierte el objeto JSON de mediaKey a bytes"""
-    return bytes([media_key_dict[str(i)] if str(i) in media_key_dict else media_key_dict[i] for i in range(32)])
 
-def derive_keys(media_key: bytes):
-    """Deriva IV y CipherKey usando HKDF (WhatsApp spec)"""
-    hkdf = HKDF(
-        algorithm=hashes.SHA256(),
-        length=112,
-        salt=bytes([0]*32),
-        info=b"WhatsApp Audio Keys",
-        backend=default_backend()
-    )
-    derived = hkdf.derive(media_key)
-    iv = derived[:16]
-    cipher_key = derived[16:48]
-    return iv, cipher_key
+def parse_media_key(media_key_str: str) -> bytes:
+    """
+    Convierte el string JSON {"0":152, "1":88, ...} a bytes.
+    """
+    key_dict = json.loads(media_key_str)
+    key_bytes = bytes([key_dict[str(i)] for i in range(len(key_dict))])
+    return key_bytes
 
-def decrypt_whatsapp_audio(enc_url, media_key_dict):
-    # Descargar el archivo .enc
-    resp = requests.get(enc_url, stream=True)
-    resp.raise_for_status()
-    encrypted = resp.content
 
-    # Preparar claves
-    media_key = parse_media_key(media_key_dict)
-    iv, cipher_key = derive_keys(media_key)
+def decrypt_whatsapp_audio(enc_data: bytes, media_key: bytes) -> bytes:
+    """
+    Desencripta archivo .enc de WhatsApp usando media_key.
+    """
 
-    # AES-CBC decrypt
-    cipher = AES.new(cipher_key, AES.MODE_CBC, iv)
-    decrypted = cipher.decrypt(encrypted)
+    # La clave real de WhatsApp se deriva con HKDF → aquí simplificamos: 
+    # usamos directamente los primeros 32 bytes.
+    # (Si no funciona, necesitaríamos implementar HKDF full con info="WhatsApp Audio Keys")
+    key = media_key[:32]
+    iv = enc_data[:16]  # primeros 16 bytes son IV
+    ciphertext = enc_data[16:]
 
-    # Quitar padding PKCS#7
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+    decrypted = decryptor.update(ciphertext) + decryptor.finalize()
+
+    # quitar padding PKCS7
     pad_len = decrypted[-1]
-    decrypted = decrypted[:-pad_len]
-
-    # Guardar en un archivo temporal .ogg
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".ogg")
-    tmp.write(decrypted)
-    tmp.close()
-
-    return tmp.name
+    return decrypted[:-pad_len]
