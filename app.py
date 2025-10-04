@@ -125,7 +125,7 @@ def process_model_output():
         url = f"{server_url}/message/sendMedia/{instancia}"
         payload = {
             "number": number,
-            "mediatype": "doc",
+            "mediatype": "document",
             "mimetype": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "caption": f"{file_title}",
             "media": file_b64,
