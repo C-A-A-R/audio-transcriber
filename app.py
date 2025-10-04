@@ -99,8 +99,16 @@ def process_model_output():
         if not (instancia and number and server_url and apikey):
             return jsonify({"error": "missing Evolution API parameters"}), 400
 
-        # 2. Mapear tokens -> Markdown limpio
-        markdown_text, _ = map_model_output_to_markdown(model_output)
+        # 2. Decodificar si viene como JSON string
+        parsed_output = model_output
+        if isinstance(model_output, str):
+            try:
+                parsed_output = json.loads(model_output)
+            except json.JSONDecodeError:
+                parsed_output = model_output  # lo dejamos como string normal
+
+        # 3. Mapear tokens -> Markdown limpio
+        markdown_text, _ = map_model_output_to_markdown(parsed_output)
 
         # 3. Extraer título como nombre de documento
         file_title = extract_title_from_markdown(markdown_text)
