@@ -3,4 +3,4 @@ requests==2.31.0
 cryptography==41.0.7
 assemblyai==0.23.1
 python-dotenv==1.0.1
-python-docx==0.8.12
+python-docx==1.2.0
